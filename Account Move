@@ -1,0 +1,17 @@
+let
+    Source = TechneithConnector.Contents("https://odoo.saner.gy/power-bi/connecter/", "_039cc7f23fd834d7526dca1e9256966cb99fd8aa"),
+    account.move = Source{[Name="account.move"]}[Data],
+
+    // Ensure that create_date is selected and convert it to a proper date type
+    #"Removed Other Columns" = Table.SelectColumns(account.move,{"id", "amount_residual", "amount_total", "move_type", "name", "partner_id", "payment_reference", "payment_state", "ref", "state", "create_date"}),
+
+    // Convert create_date to date type
+    #"Changed Type" = Table.TransformColumnTypes(#"Removed Other Columns", {{"create_date", type date}}),
+
+    // Filter rows where create_date is greater than or equal to 1st March 2024
+    #"Filtered Rows" = Table.SelectRows(#"Changed Type", each [create_date] >= #date(2024, 3, 1)),
+
+    // Combine filtered data with AccountMove2023
+    #"Appended Query" = Table.Combine({#"Filtered Rows", AccountMove2023})
+in
+    #"Appended Query"
