@@ -1,0 +1,14 @@
+let
+
+    Source = TechneithConnector.Contents("https://odoo.saner.gy/power-bi/connecter/", "_039cc7f23fd834d7526dca1e9256966cb99fd8aa"),
+    account.move.line = Source{[Name="account.move.line"]}[Data],
+    #"Removed Other Columns" = Table.SelectColumns(account.move.line,{"id", "account_id", "amount_currency", "amount_residual", "amount_residual_currency", "create_date", "date", "move_id", "name", "parent_state", "partner_id", "ref"}),
+    #"Filtered Rows" = Table.SelectRows(#"Removed Other Columns", each ([account_id] = 1455)),
+    #"Added Custom" = Table.AddColumn(#"Filtered Rows" , "Is Deposit", each if Text.StartsWith(
+
+
+[ref], "DEP") then "Y" else "N"),
+    #"Removed Errors" = Table.RemoveRowsWithErrors(#"Added Custom", {"Is Deposit"}),
+    #"Filtered Rows1" = Table.SelectRows(#"Removed Errors", each [date] > #date(2023, 12, 31))
+in
+    #"Filtered Rows1"
