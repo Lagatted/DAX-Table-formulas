@@ -1,0 +1,39 @@
+let
+    // New source from TechneithConnector with identifier
+    Source = TechneithConnector.Contents("https://odoo.saner.gy/power-bi/connecter/", "_039cc7f23fd834d7526dca1e9256966cb99fd8aa"),
+    
+    // Access the data from the "scheduler.line"
+    scheduler.line = Source{[Name="scheduler.line"]}[Data],
+    
+    // Convert create_date to Date
+    #"Converted create_date" = Table.TransformColumnTypes(scheduler.line, {{"create_date", type date}}),
+    
+    // Filter rows based on the converted create_date
+    #"Filtered Rows1" = Table.SelectRows(#"Converted create_date", each [create_date] > #date(2024, 4, 1)),
+    
+    // Remove other columns
+    #"Removed Other Columns" = Table.SelectColumns(#"Filtered Rows1", {"create_date", "flt_tag", "fri_collected", "mon_collected", "sat_collected", "schedule_id", "sun_collected", "thu_collected", "tue_collected", "waste_collector", "wed_collected"}),
+    
+    // Reorder columns
+    #"Reordered Columns" = Table.ReorderColumns(#"Removed Other Columns", {"create_date", "flt_tag", "waste_collector", "fri_collected", "mon_collected", "sat_collected", "schedule_id", "sun_collected", "thu_collected", "tue_collected", "wed_collected"}),
+    
+    // Unpivot other columns
+    #"Unpivoted Other Columns" = Table.UnpivotOtherColumns(#"Reordered Columns", {"create_date", "schedule_id", "flt_tag"}, "Attribute", "Value"),
+    
+    // Split column by delimiter
+    #"Split Column by Delimiter" = Table.SplitColumn(#"Unpivoted Other Columns", "Attribute", Splitter.SplitTextByDelimiter("_", QuoteStyle.Csv), {"Attribute.1", "Attribute.2"}),
+    
+    // Remove unwanted columns
+    #"Removed Columns" = Table.RemoveColumns(#"Split Column by Delimiter", {"Attribute.2"}),
+    
+    // Rename columns
+    #"Renamed Columns" = Table.RenameColumns(#"Removed Columns", {{"Attribute.1", "Day of Week"}, {"flt_tag", "toilet_id"}}),
+    
+    // Uppercase the text in "Day of Week" column
+    #"Uppercased Text" = Table.TransformColumns(#"Renamed Columns", {{"Day of Week", Text.Upper, type text}}),
+    
+    // Change the type of create_date to Date
+    #"Changed Type" = Table.TransformColumnTypes(#"Uppercased Text", {{"create_date", type date}})
+    
+in
+    #"Changed Type"
