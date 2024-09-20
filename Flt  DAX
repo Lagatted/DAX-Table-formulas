@@ -1,0 +1,36 @@
+let
+    // New source from TechneithConnector with identifier
+    Source = TechneithConnector.Contents("https://odoo.saner.gy/power-bi/connecter/", "_039cc7f23fd834d7526dca1e9256966cb99fd8aa"),
+    
+    // Access the data from "sanergy.toilet"
+    sanergy_toilet = Source{[Name="sanergy.toilet"]}[Data],
+    
+    // Remove other columns except the ones of interest
+    #"Removed Other Columns" = Table.SelectColumns(sanergy_toilet, {"id", "area_id", "closing_date", "create_date", "gps_latitude", "gps_longitude", "location_id", "name", "opening_date", "operational_status", "opportunity_id", "payment_type", "permanent_closure", "permanent_closure_date", "product_type", "region_id", "reopen_due_date", "route_id", "specific_status", "subarea_id"}),
+    
+    // Rename "name" column to "Toilet"
+    #"Renamed Columns" = Table.RenameColumns(#"Removed Other Columns", {{"name", "Toilet"}}),
+    
+    // Change type of "create_date" to date
+    #"Changed Type" = Table.TransformColumnTypes(#"Renamed Columns", {{"create_date", type date}}),
+    
+    // Join with CRM Leads on "opportunity_id"
+    #"Merged with CRM Lead for User" = Table.NestedJoin(#"Changed Type", {"opportunity_id"}, #"CRM Leads", {"id"}, "CRM Leads", JoinKind.LeftOuter),
+    
+    // Expand CRM Leads columns
+    #"Expanded CRM Leads" = Table.ExpandTableColumn(#"Merged with CRM Lead for User", "CRM Leads", {"customer_vetted", "partner_id", "stage_id", "user_id"}, {"customer_vetted", "partner_id", "stage_id", "user_id"}),
+    
+    // Join with Business Partner for "partner_id" to get FLO name
+    #"Merged with BP for FLO name" = Table.NestedJoin(#"Expanded CRM Leads", {"partner_id"}, #"Bus Partner - Customer", {"id"}, "Bus Partner - Customer", JoinKind.LeftOuter),
+    
+    // Expand the "name" column from Business Partner table as "FLO"
+    #"Expanded FLO name" = Table.ExpandTableColumn(#"Merged with BP for FLO name", "Bus Partner - Customer", {"name"}, {"FLO"}),
+    
+    // Join with Postgres Toilet Status for "id"
+    #"Merged Queries" = Table.NestedJoin(#"Expanded FLO name", {"id"}, #"Postgres Toilet Status", {"guid"}, "Postgres Toilet Status", JoinKind.LeftOuter),
+    
+    // Expand operational status from Postgres data
+    #"Expanded Postgres Toilet Status" = Table.ExpandTableColumn(#"Merged Queries", "Postgres Toilet Status", {"operationalStatus"}, {"Postgres Status"})
+    
+in
+    #"Expanded Postgres Toilet Status"
