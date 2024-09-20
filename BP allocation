@@ -1,0 +1,21 @@
+let
+    // New source from TechneithConnector with identifier
+    Source = TechneithConnector.Contents("https://odoo.saner.gy/power-bi/connecter/", "_039cc7f23fd834d7526dca1e9256966cb99fd8aa"),
+    
+    // Access the data from "res.partner"
+    res_partner = Source{[Name="res.partner"]}[Data],
+
+    // Remove unnecessary columns from "res.partner"
+    #"Removed Other Columns" = Table.SelectColumns(res_partner,{"id", "name"}),
+
+    // Perform a nested join between res.partner[id] and Toilets[partner_id]
+    #"Nested Join" = Table.NestedJoin(#"Removed Other Columns", {"id"}, Toilets, {"partner_id"}, "Toilets", JoinKind.LeftOuter),
+    
+    // Expand the joined Toilets table and rename the id column from Toilets to "toilet_ids"
+    #"Expanded Toilets" = Table.ExpandTableColumn(#"Nested Join", "Toilets", {"id"}, {"toilet_ids"}),
+
+    // Change toilet_ids to integer type, if necessary
+    #"Changed Type" = Table.TransformColumnTypes(#"Expanded Toilets",{{"toilet_ids", Int64.Type}})
+    
+in
+    #"Changed Type"
