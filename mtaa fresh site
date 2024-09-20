@@ -1,0 +1,17 @@
+let
+    // Load the source table
+    Source = TechneithConnector.Contents("https://odoo.saner.gy/power-bi/connecter/", "_039cc7f23fd834d7526dca1e9256966cb99fd8aa"),
+    mtaa_fresh_site = Source{[Name="mtaa.fresh.site"]}[Data],
+    Mtaa_fresh_shift = Source{[Name="mtaa.fresh.shift"]}[Data],
+
+    // Merge mtaa_fresh_site with Mtaa_fresh_shift on the appropriate columns
+    #"Merged Queries" = Table.NestedJoin(mtaa_fresh_site, {"id"}, Mtaa_fresh_shift, {"site_id"}, "Mtaa_fresh_shift", JoinKind.LeftOuter),
+    
+    // Expand the Mtaa_fresh_shift table to import only the shift id
+    #"Expanded Mtaa_fresh_shift" = Table.ExpandTableColumn(#"Merged Queries", "Mtaa_fresh_shift", {"id"}, {"Shift_id"}),
+
+    // Select necessary columns from the merged table
+    #"Removed Other Columns" = Table.SelectColumns(#"Expanded Mtaa_fresh_shift",{"id", "active", "analytic_account_id", "create_date", "create_uid", "name", "site_code", "write_date", "write_uid", "Shift_id"})
+    
+in
+    #"Removed Other Columns"
