@@ -1,0 +1,30 @@
+SELECT 
+    sti.toilet_id,
+    st.name AS toilet_name,
+    SUM(
+        CASE 
+            WHEN am.amount_residual <= 1 THEN 1.5
+            ELSE 0 
+        END
+    ) AS loyalty_points
+FROM 
+    sanergy_toilet_invoice sti
+LEFT JOIN 
+    account_move am ON sti.invoice_id = am.id
+LEFT JOIN 
+    sanergy_toilet st ON sti.toilet_id = st.id
+WHERE 
+    sti.create_date >= DATE_TRUNC('month', CURRENT_DATE)
+    AND sti.create_date < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
+    AND am.date <= DATE_TRUNC('month', sti.create_date) + INTERVAL '1 month' - INTERVAL '1 day'
+    AND am.amount_residual <= 1  -- Ensuring only invoices with amount_residual <= 1 are considered
+GROUP BY 
+    st.name,
+    sti.toilet_id
+HAVING 
+    SUM(
+        CASE 
+            WHEN am.amount_residual <= 1 THEN 2.5
+            ELSE 0 
+        END
+    ) > 0  -- Ensuring only toilets awarded 2.5 points are shown
