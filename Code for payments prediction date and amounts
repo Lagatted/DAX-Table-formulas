@@ -1,0 +1,249 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# # This is a predictive analytics project that aims to study customer behavior and predict their next payment dates and amounts
+
+# In[2]:
+
+
+# Step 1: Import the required libraries and load the dataset
+import pandas as pd
+import numpy as np
+from datetime import datetime
+
+# File path to the Excel data
+file_path = r"C:\Users\Teddy.Chebon\Downloads\sanergy.mpesa (23).xlsx"
+df = pd.read_excel(file_path)
+
+
+# check the head of the loaded data
+
+df.head(10)
+
+
+# In[5]:
+
+
+# Step 2: Clean and preprocess data
+df['Transaction Date'] = pd.to_datetime(df['Transaction Date'])
+
+# Group daily payments by toilet and date
+daily_payments = df.groupby(
+    ['Toilet Name/ID', 'Toilet Name', 'Region', 'Toilet Name/Company', 'Transaction Date']
+)['Transaction Amount'].sum().reset_index()
+
+daily_payments.head(10)
+
+
+# In[6]:
+
+
+# Step 3: Helper functions for payment intervals
+def get_intervals(dates):
+    dates_sorted = dates.sort_values()
+    intervals = dates_sorted.diff().dropna().dt.days
+    return intervals
+
+def get_rolling_avg_gap(dates, window=3):
+    intervals = get_intervals(dates)
+    if intervals.empty:
+        return 30
+    rolling_avg = intervals.rolling(window=window, min_periods=1).mean()
+    return rolling_avg.iloc[-1]
+
+
+# In[7]:
+
+
+# Step 4: Feature engineering per toilet
+toilet_ids = daily_payments['Toilet Name/ID'].unique()
+features_list = []
+
+for tid in toilet_ids:
+    payments = daily_payments[daily_payments['Toilet Name/ID'] == tid].copy()
+    dates = payments['Transaction Date'].sort_values()
+
+    rolling_avg_gap = get_rolling_avg_gap(dates, window=3)
+    intervals = get_intervals(dates)
+    avg_interval = intervals.mean() if not intervals.empty else 30
+
+    payments['YearMonth'] = payments['Transaction Date'].dt.to_period('M')
+    avg_payments_per_month = payments.groupby('YearMonth').size().mean()
+
+    last_5_payments = payments.tail(5)
+    avg_payment_last_5 = last_5_payments['Transaction Amount'].mean()
+
+    last_payment = payments.iloc[-1]
+
+    # Get last 3 full months of data
+    last_date = payments['Transaction Date'].max()
+    three_months_ago = last_date - pd.DateOffset(months=3)
+    recent_3m_payments = payments[payments['Transaction Date'] >= three_months_ago]
+    recent_3m_amounts = recent_3m_payments['Transaction Amount'].tolist()
+
+    features_list.append({
+        'Toilet Name/ID': tid,
+        'Last Payment Date': last_payment['Transaction Date'],
+        'Last Payment Amount': last_payment['Transaction Amount'],
+        'Avg Payment Last 5': avg_payment_last_5,
+        'Avg Interval (days)': avg_interval,
+        'Rolling Avg Gap (days)': rolling_avg_gap,
+        'Avg Payments per Month': avg_payments_per_month,
+        'Toilet Name': last_payment['Toilet Name'],
+        'Region': last_payment['Region'],
+        'Company': last_payment['Toilet Name/Company'],
+        'Recent 3M Amounts': recent_3m_amounts
+    })
+
+features = pd.DataFrame(features_list)
+
+features.head(10)
+
+
+# In[8]:
+
+
+# Step 5: Prediction logic
+def predict_payment_dates(row, target_year, target_month):
+    last_date = row['Last Payment Date']
+    avg_interval = row['Rolling Avg Gap (days)']
+    avg_payments = row['Avg Payments per Month']
+    n_payments = max(1, int(round(avg_payments)))
+
+    today = pd.to_datetime(datetime.today().date())
+    predicted_dates = []
+
+    month_start = pd.Timestamp(year=target_year, month=target_month, day=1)
+    month_end = (month_start + pd.offsets.MonthEnd(1)).normalize()
+
+    if n_payments > 1:
+        start_date = month_start
+        days_available = (month_end - start_date).days + 1
+        step = max(1, days_available // n_payments)
+
+        for i in range(n_payments):
+            pred_date = start_date + pd.Timedelta(days=i * step)
+            if month_start <= pred_date <= month_end:
+                predicted_dates.append(pred_date)
+    else:
+        i = 1
+        attempts = 0
+        while len(predicted_dates) < n_payments and attempts < 30:
+            next_date = last_date + pd.Timedelta(days=avg_interval * i)
+            if next_date < month_start:
+                i += 1
+                attempts += 1
+                continue
+            if next_date in predicted_dates:
+                i += 1
+                attempts += 1
+                continue
+            predicted_dates.append(next_date)
+            i += 1
+            attempts += 1
+
+    return predicted_dates
+
+
+# In[9]:
+
+
+# Step 6: Set target to current month
+today = pd.to_datetime(datetime.today().date())
+target_year = today.year
+target_month = today.month
+
+
+# In[10]:
+
+
+# Step 7: Apply prediction function
+features['Predicted Payment Dates'] = features.apply(
+    lambda row: predict_payment_dates(row, target_year, target_month), axis=1
+)
+
+
+# In[11]:
+
+
+# Step 8: Expand predictions into rows
+expanded_rows = []
+
+for _, row in features.iterrows():
+    last_payment_date = row['Last Payment Date']
+    predicted_dates = row['Predicted Payment Dates']
+
+    if predicted_dates:
+        recent_amounts = row['Recent 3M Amounts']
+        if not recent_amounts:
+            recent_amounts = [row['Avg Payment Last 5']] * len(predicted_dates)
+        else:
+            while len(recent_amounts) < len(predicted_dates):
+                recent_amounts += recent_amounts
+            recent_amounts = recent_amounts[:len(predicted_dates)]
+
+        for dt, amt in zip(predicted_dates, recent_amounts):
+            expanded_rows.append({
+                'Company': row['Company'],
+                'Toilet ID': row['Toilet Name/ID'],
+                'Toilet Name': row['Toilet Name'],
+                'Region': row['Region'],
+                'Last Payment Date': last_payment_date.date(),
+                'Last Payment Amount': row['Last Payment Amount'],
+                'Predicted Payment Date': dt.date(),
+                'Predicted Amount': amt,
+                'Rolling Avg Gap (days)': round(row['Rolling Avg Gap (days)'], 2),
+                'Days Since Last Payment': (today - last_payment_date).days,
+                'Days Till Predicted Date': (dt - today).days,
+                'Prediction Month': dt.strftime('%B'),
+                'Is Past Prediction': dt.date() < today.date()
+            })
+    else:
+        expanded_rows.append({
+            'Company': row['Company'],
+            'Toilet ID': row['Toilet Name/ID'],
+            'Toilet Name': row['Toilet Name'],
+            'Region': row['Region'],
+            'Last Payment Date': last_payment_date.date(),
+            'Last Payment Amount': row['Last Payment Amount'],
+            'Predicted Payment Date': None,
+            'Predicted Amount': row['Avg Payment Last 5'],
+            'Rolling Avg Gap (days)': round(row['Rolling Avg Gap (days)'], 2),
+            'Days Since Last Payment': (today - last_payment_date).days,
+            'Days Till Predicted Date': None,
+            'Prediction Month': None,
+            'Is Past Prediction': None
+        })
+
+
+# In[12]:
+
+
+# Step 9: Output DataFrame
+output_df = pd.DataFrame(expanded_rows)
+
+# Step 10: Preview
+output_df.head(10)
+
+
+# In[22]:
+
+
+# Step 11 : Test the different toilets using filters for accuracy
+
+filtered_predictions = output_df[output_df['Toilet ID'] == 21577]
+filtered_predictions.head(30)
+
+
+# In[14]:
+
+
+# Step 12: Export output to Excel 
+output_df.to_excel("predicted_payments_and_amounts_model.xlsx", index=False)
+
+
+# In[ ]:
+
+
+
+
