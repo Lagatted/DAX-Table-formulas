@@ -1,0 +1,50 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[3]:
+
+
+import pandas as pd
+import os
+
+# File path
+file_path = r'C:\Users\Teddy.Chebon\Documents\predicted_payments_and_amounts_model.csv'
+
+# Load the data
+df = pd.read_csv(file_path)
+df.head(10)
+
+
+# In[6]:
+
+
+# Drop columns that are completely NaN
+df_cleaned = df.dropna(axis=1, how='all')
+
+# Optionally, overwrite the original dataframe
+df = df_cleaned
+df.head(10)
+
+
+# In[7]:
+
+
+# Create a directory to save the chunks (optional but recommended)
+output_dir = r'C:\Users\Teddy.Chebon\Documents\split_files'
+os.makedirs(output_dir, exist_ok=True)
+
+# Split the data and save
+chunk_size = 1000
+for i in range(0, len(df), chunk_size):
+    chunk = df.iloc[i:i + chunk_size]
+    chunk_file = os.path.join(output_dir, f'chunk_{i//chunk_size + 1}.csv')
+    chunk.to_csv(chunk_file, index=False)
+
+print("CSV split and saved successfully.")
+
+
+# In[ ]:
+
+
+
+
