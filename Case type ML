@@ -1,0 +1,129 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
+
+# Importing libraries
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import mean_absolute_error, r2_score
+from itertools import product
+import datetime
+
+
+# In[2]:
+
+
+# Load the data
+file_path = r'C:\Users\Teddy.Chebon\Documents\Case types.csv'
+df = pd.read_csv(file_path)
+df.head()
+
+
+# In[3]:
+
+
+# Convert to datetime and sort
+df['Year-Month'] = pd.to_datetime(df['Year-Month'])
+df = df.sort_values('Year-Month')
+
+
+# In[4]:
+
+
+# Extract year and month
+df['Year'] = df['Year-Month'].dt.year
+df['Month'] = df['Year-Month'].dt.month
+
+# Label encoding
+le_region = LabelEncoder()
+le_case_type = LabelEncoder()
+
+df['Region_enc'] = le_region.fit_transform(df['Region'])
+df['Case_Type_enc'] = le_case_type.fit_transform(df['Case Type'])
+
+
+# In[5]:
+
+
+# Define training window (last 6 months)
+cutoff_date = df['Year-Month'].max() - pd.DateOffset(months=6)
+
+train_df = df[df['Year-Month'] > cutoff_date]
+
+# Features and target
+features = ['Year', 'Month', 'Region_enc', 'Case_Type_enc']
+target = 'Case Count'
+
+X_train = train_df[features]
+y_train = train_df[target]
+
+
+# In[6]:
+
+
+# Train the model
+model = RandomForestRegressor(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+
+
+# In[7]:
+
+
+# Predict on training set (for evaluation only)
+y_pred = model.predict(X_train)
+
+mae = mean_absolute_error(y_train, y_pred)
+r2 = r2_score(y_train, y_pred)
+
+print(f"Training Mean Absolute Error (MAE): {mae:.2f}")
+print(f"Training R² Score: {r2:.2f}")
+
+
+# In[8]:
+
+
+# Generate all combinations of Region × Case Type
+recent_df = df[df['Year-Month'] > cutoff_date]
+unique_regions = recent_df['Region'].unique()
+unique_case_types = recent_df['Case Type'].unique()
+
+# Generate grid
+next_month = df['Year-Month'].max() + pd.DateOffset(months=1)
+grid = list(product(unique_regions, unique_case_types))
+
+# Create DataFrame
+prediction_input = pd.DataFrame(grid, columns=['Region', 'Case Type'])
+prediction_input['Year-Month'] = next_month
+prediction_input['Year'] = next_month.year
+prediction_input['Month'] = next_month.month
+
+# Encode using previously fit label encoders
+prediction_input['Region_enc'] = le_region.transform(prediction_input['Region'])
+prediction_input['Case_Type_enc'] = le_case_type.transform(prediction_input['Case Type'])
+
+# Predict
+X_pred = prediction_input[['Year', 'Month', 'Region_enc', 'Case_Type_enc']]
+prediction_input['Predicted Case Count'] = model.predict(X_pred)
+
+# Format output
+final_output = prediction_input[['Year-Month', 'Region', 'Case Type', 'Predicted Case Count']]
+
+
+# In[10]:
+
+
+# Save the predictions
+output_path = r'C:\Users\Teddy.Chebon\Documents\Predicted_Case_Count_Full.csv'
+final_output.to_csv(output_path, index=False)
+print("Predictions saved to:", output_path)
+
+
+# In[ ]:
+
+
+
+
