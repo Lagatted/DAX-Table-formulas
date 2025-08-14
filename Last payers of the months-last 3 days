@@ -1,0 +1,212 @@
+import pandas as pd
+import os
+
+# Load the data
+file_path = r"C:\Users\Teddy.Chebon\Documents\Toilet_Predictions\Mpesa.xlsx"
+df = pd.read_excel(file_path)
+
+# Parse dates
+df['Transaction Date'] = pd.to_datetime(df['Transaction Date'])
+
+# Display column names to understand the data structure
+print("Available columns in the dataset:")
+print(df.columns.tolist())
+print("\nFirst few rows of data:")
+print(df.head())
+print()
+
+# Try to identify the amount column (common variations)
+amount_col = None
+possible_amount_cols = ['Amount', 'amount', 'Transaction Amount', 'Value', 'Payment Amount', 'Cash']
+for col in possible_amount_cols:
+    if col in df.columns:
+        amount_col = col
+        break
+
+if amount_col is None:
+    print("Warning: Could not find amount column. Available columns:", df.columns.tolist())
+    print("Please check your data structure.")
+
+# Filter data for May, June, and July of the specific year
+year = 2025  # Updated for your 2025 dataset
+df = df[
+    (df['Transaction Date'].dt.year == year) & 
+    (df['Transaction Date'].dt.month.isin([5, 6, 7]))
+]
+
+# Define a function to get the last 3 days of a month using actual calendar dates
+def last_three_days(df_month, year=2025):
+    if df_month.empty:
+        return df_month
+    
+    # Get the month from the data
+    month_num = df_month['Transaction Date'].dt.month.iloc[0]
+    
+    # Get the actual last day of the calendar month
+    last_day_of_month = pd.Timestamp(year=year, month=month_num, day=1) + pd.offsets.MonthEnd(0)
+    
+    # Calculate the actual last 3 calendar days of the month
+    third_last_day = last_day_of_month - pd.Timedelta(days=2)
+    
+    print(f"    Looking for transactions from {third_last_day.strftime('%Y-%m-%d')} to {last_day_of_month.strftime('%Y-%m-%d')}")
+    
+    # Filter for transactions in the last 3 calendar days
+    return df_month[df_month['Transaction Date'] >= third_last_day]
+
+# Define year variable for the analysis
+year = 2025  # Updated for your 2025 dataset
+
+# Dictionary to store results for each month
+monthly_results = {}
+month_names = {5: 'May', 6: 'June', 7: 'July'}
+
+print("=== ANALYZING TOILET PAYMENTS IN LAST 3 DAYS OF EACH MONTH ===\n")
+
+# Analyze each month separately and store results
+for month in [5, 6, 7]:
+    print(f"--- ANALYZING {month_names[month].upper()} ---")
+    
+    # Filter data for current month AND year only
+    df_month = df[
+        (df['Transaction Date'].dt.month == month) & 
+        (df['Transaction Date'].dt.year == year)
+    ]
+    
+    if df_month.empty:
+        print(f"No data available for {month_names[month]}")
+        monthly_results[month] = set()  # Empty set for this month
+        continue
+    
+    # Get transactions from last 3 calendar days of the month
+    df_last3 = last_three_days(df_month, year=2025)  # Updated for 2025
+    
+    if df_last3.empty:
+        print(f"No payments in the last 3 days of {month_names[month]}")
+        monthly_results[month] = set()  # Empty set for this month
+        continue
+    
+    # Get unique toilets that made payments in last 3 days of this month
+    toilets_this_month = set(df_last3['Toilet Name/ID'].unique())
+    monthly_results[month] = toilets_this_month
+    
+    print(f"Found {len(toilets_this_month)} toilets with payments in last 3 days of {month_names[month]}")
+    print("-" * 50)
+
+# Find toilets that appear in ALL 3 months (consistent payers)
+consistent_toilets = monthly_results[5] & monthly_results[6] & monthly_results[7]
+
+print(f"\n=== CONSISTENT PAYERS ANALYSIS ===")
+print(f"Toilets that paid in last 3 days of ALL three months: {len(consistent_toilets)}")
+
+if len(consistent_toilets) == 0:
+    print("No toilets made payments consistently in the last 3 days of all three months.")
+else:
+    print(f"Consistent toilets: {sorted(list(consistent_toilets))[:10]}...")  # Show first 10
+    
+    # Now get detailed information for consistent toilets
+    print("\n=== BUILDING DETAILED ANALYSIS FOR CONSISTENT PAYERS ===")
+    
+    final_results = []
+    
+    for toilet_id in consistent_toilets:
+        toilet_data = {'Toilet Name/ID': toilet_id}
+        
+        # Get last payment date and details for each month
+        for month in [5, 6, 7]:
+            month_name = month_names[month]
+            
+            # Filter for this month and toilet
+            df_month = df[
+                (df['Transaction Date'].dt.month == month) & 
+                (df['Transaction Date'].dt.year == year) &
+                (df['Toilet Name/ID'] == toilet_id)
+            ]
+            
+            # Get last 3 days transactions for this toilet
+            df_last3_toilet = last_three_days(df_month, year=2025)
+            
+            if not df_last3_toilet.empty:
+                # Get the last payment date in this month
+                last_payment = df_last3_toilet['Transaction Date'].max()
+                toilet_data[f'Last_Payment_{month_name}'] = last_payment
+                
+                # Get payment count and total amount for this month
+                payment_count = len(df_last3_toilet)
+                toilet_data[f'Payments_Count_{month_name}'] = payment_count
+                
+                if amount_col is not None:
+                    total_amount = df_last3_toilet[amount_col].sum()
+                    toilet_data[f'Total_Amount_{month_name}'] = total_amount
+                
+                # Get additional toilet information (from first record)
+                additional_cols = ['Toilet Name', 'Region', 'Area', 'Sub Area', 'FLO Account']
+                for col in additional_cols:
+                    if col in df_last3_toilet.columns and col not in toilet_data:
+                        toilet_data[col] = df_last3_toilet[col].iloc[0]
+        
+        final_results.append(toilet_data)
+    
+    # Create final DataFrame
+    final_df = pd.DataFrame(final_results)
+    
+    # Reorder columns for better presentation
+    base_cols = ['Toilet Name/ID']
+    additional_cols = ['Toilet Name', 'Region', 'Area', 'Sub Area', 'FLO Account']
+    date_cols = ['Last_Payment_May', 'Last_Payment_June', 'Last_Payment_July']
+    count_cols = ['Payments_Count_May', 'Payments_Count_June', 'Payments_Count_July']
+    
+    ordered_cols = base_cols
+    # Add additional info columns if they exist
+    for col in additional_cols:
+        if col in final_df.columns:
+            ordered_cols.append(col)
+    
+    # Add payment date columns
+    ordered_cols.extend(date_cols)
+    
+    # Add count columns
+    ordered_cols.extend(count_cols)
+    
+    # Add amount columns if they exist
+    if amount_col is not None:
+        amount_cols = ['Total_Amount_May', 'Total_Amount_June', 'Total_Amount_July']
+        for col in amount_cols:
+            if col in final_df.columns:
+                ordered_cols.append(col)
+    
+    # Reorder DataFrame
+    final_df = final_df.reindex(columns=ordered_cols)
+    
+    # Sort by Toilet Name/ID
+    final_df = final_df.sort_values('Toilet Name/ID').reset_index(drop=True)
+    
+    # Display results
+    print(f"\n=== FINAL RESULTS: CONSISTENT PAYERS ===")
+    print(f"Total consistent toilets: {len(final_df)}")
+    print("\nFirst 10 records:")
+    print(final_df.head(10).to_string(index=False))
+    
+    # Save to CSV
+    save_directory = r"C:\Users\Teddy.Chebon\Documents\Toilet_Predictions"
+    filename = "Last_payments_analysis.csv"
+    filepath = os.path.join(save_directory, filename)
+    final_df.to_csv(filepath, index=False)
+    print(f"\n=== FILE SAVED ===")
+    print(f"Saved results to: {filepath}")
+    
+    # Summary statistics
+    print(f"\n=== SUMMARY STATISTICS ===")
+    print(f"- Total consistent toilets: {len(final_df)}")
+    if amount_col is not None:
+        for month in ['May', 'June', 'July']:
+            col = f'Total_Amount_{month}'
+            if col in final_df.columns:
+                total = final_df[col].sum()
+                print(f"- Total amount collected in {month}: {total:,.2f}")
+    
+    print(f"- Average payments per toilet per month:")
+    for month in ['May', 'June', 'July']:
+        col = f'Payments_Count_{month}'
+        if col in final_df.columns:
+            avg = final_df[col].mean()
+            print(f"  * {month}: {avg:.1f}")
