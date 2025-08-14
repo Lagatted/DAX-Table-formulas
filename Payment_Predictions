@@ -1,0 +1,176 @@
+# Step 1: Import libraries
+import pandas as pd
+import numpy as np
+from datetime import datetime
+
+# Step 2: Load data
+file_path = r"C:\Users\Teddy.Chebon\Documents\Toilet_Predictions\Mpesa.xlsx"
+df = pd.read_excel(file_path)
+
+df['Transaction Date'] = pd.to_datetime(df['Transaction Date'])
+
+# Step 3: Aggregate by toilet and date - but keep first transaction per month
+daily_payments = df.groupby(
+    ['Toilet Name/ID', 'Toilet Name', 'Region', 'Toilet Name/Company', 'Transaction Date']
+)['Transaction Amount'].sum().reset_index()
+
+# Step 4: Define helper functions
+def get_intervals(dates):
+    """Calculate intervals between consecutive dates"""
+    dates_sorted = dates.sort_values()
+    return dates_sorted.diff().dropna().dt.days
+
+def get_rolling_avg_gap_last_3(dates, window=3):
+    """Get rolling average gap using only last 3 intervals"""
+    intervals = get_intervals(dates)
+    if intervals.empty:
+        return 30
+    # Take only last 3 intervals for rolling average
+    last_intervals = intervals.tail(window)
+    return last_intervals.mean()
+
+def get_first_transaction_per_month(payments):
+    """For each month, keep only the first transaction date"""
+    payments = payments.copy()
+    payments['YearMonth'] = payments['Transaction Date'].dt.to_period('M')
+    
+    # Group by month and take the first (earliest) transaction date
+    first_per_month = payments.groupby('YearMonth').agg({
+        'Transaction Date': 'min',  # First date in each month
+        'Transaction Amount': 'sum'  # Sum all amounts for that month
+    }).reset_index()
+    
+    return first_per_month
+
+def get_mode_day_last_3(dates):
+    """Get mode day from last 3 payment dates"""
+    if len(dates) < 3:
+        return dates.dt.day.mode().iloc[0] if not dates.dt.day.mode().empty else 15
+    
+    last_3_dates = dates.tail(3)
+    days = last_3_dates.dt.day
+    mode_days = days.mode()
+    
+    if not mode_days.empty:
+        return int(mode_days.iloc[0])
+    else:
+        return 15  # Default fallback
+
+# Step 5: Feature engineering
+toilet_ids = daily_payments['Toilet Name/ID'].unique()
+features_list = []
+
+for tid in toilet_ids:
+    payments = daily_payments[daily_payments['Toilet Name/ID'] == tid].copy()
+    
+    # Get first transaction per month for this toilet
+    monthly_payments = get_first_transaction_per_month(payments)
+    dates = monthly_payments['Transaction Date'].sort_values()
+
+    # Calculate rolling average gap using last 3 intervals
+    rolling_avg_gap = get_rolling_avg_gap_last_3(dates, window=3)
+    avg_interval = get_intervals(dates).mean() if not dates.empty else 30
+
+    # Calculate average payments per month
+    payments['YearMonth'] = payments['Transaction Date'].dt.to_period('M')
+    avg_payments_per_month = payments.groupby('YearMonth').size().mean()
+
+    # Get last 5 payments for average amount
+    last_5 = payments.tail(5)
+    avg_payment_last_5 = last_5['Transaction Amount'].mean()
+
+    # Get last payment info
+    last_payment = payments.iloc[-1]
+    
+    # Get recent 3 months amounts
+    recent_3m = payments[payments['Transaction Date'] >= last_payment['Transaction Date'] - pd.DateOffset(months=3)]
+    recent_3m_amounts = recent_3m['Transaction Amount'].tolist()
+
+    # Get rolling average of last 3 payments amounts
+    last_3_payments = payments.tail(3)
+    rolling_avg_amount_last_3 = last_3_payments['Transaction Amount'].mean()
+
+    features_list.append({
+        'Toilet Name/ID': tid,
+        'Toilet Name': last_payment['Toilet Name'],
+        'Company': last_payment['Toilet Name/Company'],
+        'Region': last_payment['Region'],
+        'Last Payment Date': last_payment['Transaction Date'],
+        'Last Payment Amount': last_payment['Transaction Amount'],
+        'Rolling Avg Gap (days)': rolling_avg_gap,
+        'Avg Interval (days)': avg_interval,
+        'Avg Payment Last 5': avg_payment_last_5,
+        'Rolling Avg Amount Last 3': rolling_avg_amount_last_3,
+        'Avg Payments per Month': avg_payments_per_month,
+        'Recent 3M Amounts': recent_3m_amounts,
+        'Monthly Payment Dates': dates  # Keep for mode calculation
+    })
+
+features = pd.DataFrame(features_list)
+
+# Step 6: Set prediction window
+today = pd.to_datetime(datetime.today().date())
+target_year = today.year
+target_month = today.month
+month_start = pd.Timestamp(year=target_year, month=target_month, day=1)
+month_end = (month_start + pd.offsets.MonthEnd(1)).normalize()
+
+# Step 7: Predict payment date per toilet
+def predict_next_payment_date(row):
+    last_date = row['Last Payment Date']
+    interval = row['Rolling Avg Gap (days)']
+    monthly_dates = row['Monthly Payment Dates']
+
+    # If rolling average > 30 days, force into current month using mode of last 3 payments
+    if interval > 30:
+        mode_day = get_mode_day_last_3(monthly_dates)
+        try:
+            return pd.Timestamp(year=target_year, month=target_month, day=mode_day)
+        except ValueError:  # Handle invalid dates (e.g., Feb 31)
+            return pd.Timestamp(year=target_year, month=target_month, day=min(mode_day, 28))
+    
+    # For intervals <= 30 days, predict based on interval
+    next_date = last_date + pd.Timedelta(days=interval)
+    
+    # If prediction falls in current month, use it
+    if month_start <= next_date <= month_end:
+        return next_date
+    
+    # If prediction falls outside current month, use mode day in current month
+    mode_day = get_mode_day_last_3(monthly_dates)
+    try:
+        return pd.Timestamp(year=target_year, month=target_month, day=mode_day)
+    except ValueError:  # Handle invalid dates
+        return pd.Timestamp(year=target_year, month=target_month, day=min(mode_day, 28))
+
+features['Predicted Payment Date'] = features.apply(predict_next_payment_date, axis=1)
+# Use rolling average of last 3 payments for predicted amount
+features['Predicted Amount'] = features['Rolling Avg Amount Last 3']
+features['Frequency'] = features['Avg Payments per Month'].round().astype(int)
+
+# Step 8: Final output — one row per toilet
+output_df = features[[
+    'Company', 'Toilet Name/ID', 'Toilet Name', 'Region',
+    'Last Payment Date', 'Last Payment Amount',
+    'Rolling Avg Gap (days)', 'Rolling Avg Amount Last 3',
+    'Predicted Payment Date', 'Predicted Amount', 'Frequency'
+]].copy()
+
+output_df['Days Since Last Payment'] = (today - output_df['Last Payment Date']).dt.days
+output_df['Prediction Month'] = month_start.strftime('%B')
+
+# Add a column to show prediction logic used
+def get_prediction_logic(row):
+    if row['Rolling Avg Gap (days)'] > 30:
+        return "Mode of last 3 (>30 days avg)"
+    else:
+        return "Interval-based (≤30 days avg)"
+
+output_df['Prediction Logic'] = output_df.apply(get_prediction_logic, axis=1)
+
+# Step 9: Preview
+print("Sample output:")
+print(output_df.head(10))
+print(f"\nTotal toilets: {len(output_df)}")
+print(f"\nToilets with >30 day rolling average: {len(output_df[output_df['Rolling Avg Gap (days)'] > 30])}")
+print(f"Toilets with ≤30 day rolling average: {len(output_df[output_df['Rolling Avg Gap (days)'] <= 30])}")
